@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WhatsApp Control Tower CRM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Control Tower</p>
+          <h1>💬 WhatsApp CRM</h1>
+        </div>
+        <nav class="nav" id="nav">
+          <button class="nav-btn active" data-view="dashboard">📊 Dashboard</button>
+          <button class="nav-btn" data-view="inbox">📥 Inbox</button>
+          <button class="nav-btn" data-view="agents">👥 Agentes</button>
+          <button class="nav-btn" data-view="simulator">🧪 Simulador</button>
+        </nav>
+      </header>
+
+      <main class="main-grid">
+        <section id="view-dashboard" class="view active">
+          <div class="card-grid" id="kpiCards"></div>
+          <div class="layout-two">
+            <article class="panel">
+              <h2>🏷️ Top 5 motivos</h2>
+              <div id="failTags"></div>
+            </article>
+            <article class="panel">
+              <h2>📈 Funnel por estado</h2>
+              <div id="statusFunnel"></div>
+            </article>
+          </div>
+          <article class="panel">
+            <h2>⚠️ Conversaciones en riesgo</h2>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cliente</th>
+                    <th>Estado</th>
+                    <th>Agente</th>
+                    <th>Sin respuesta (min)</th>
+                    <th>Sentimiento</th>
+                    <th>Motivo</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="riskTableBody"></tbody>
+              </table>
+            </div>
+          </article>
+          <div class="layout-two">
+            <article class="panel">
+              <h2>🏆 Ranking de agentes</h2>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Agente</th>
+                      <th>SLA %</th>
+                      <th>FRT med.</th>
+                      <th>Backlog</th>
+                      <th>Negativo %</th>
+                      <th>Reopen %</th>
+                      <th>Score</th>
+                    </tr>
+                  </thead>
+                  <tbody id="agentTableDashboard"></tbody>
+                </table>
+              </div>
+            </article>
+            <article class="panel">
+              <h2>⏰ Mensajes por hora</h2>
+              <div id="hourlyBars" class="hourly"></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="view-inbox" class="view">
+          <article class="panel">
+            <h2>📥 Inbox por estados</h2>
+            <div class="filters">
+              <select id="filterStatus">
+                <option value="">Todos los estados</option>
+                <option value="NEW">NEW</option>
+                <option value="CONTACTED">CONTACTED</option>
+                <option value="INTERESTED">INTERESTED</option>
+                <option value="NEGOTIATION">NEGOTIATION</option>
+                <option value="REENGAGEMENT">REENGAGEMENT</option>
+                <option value="SUPPORT">SUPPORT</option>
+                <option value="CLOSED">CLOSED</option>
+              </select>
+              <select id="filterRisk">
+                <option value="">Riesgo: todos</option>
+                <option value="true">Solo en riesgo</option>
+                <option value="false">Solo sin riesgo</option>
+              </select>
+              <input id="filterSearch" placeholder="🔍 Buscar por cliente, tel o id..." />
+              <button id="applyInboxFilters" class="action-btn">Filtrar</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cliente</th>
+                    <th>Estado</th>
+                    <th>Agente</th>
+                    <th>Último mensaje</th>
+                    <th>Riesgo</th>
+                    <th>Prioridad</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="inboxTableBody"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <section id="view-agents" class="view">
+          <article class="panel">
+            <h2>👥 Evaluación de agentes</h2>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Agente</th>
+                    <th>SLA %</th>
+                    <th>FRT med.</th>
+                    <th>Backlog</th>
+                    <th>Negativo %</th>
+                    <th>Reopen %</th>
+                    <th>Quality Score</th>
+                  </tr>
+                </thead>
+                <tbody id="agentTableFull"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <section id="view-simulator" class="view">
+          <article class="panel">
+            <h2>🧪 Simulador estilo Meta</h2>
+            <form id="simulatorForm" class="form-grid">
+              <label>
+                wa_id
+                <input name="wa_id" value="573001112233" required />
+              </label>
+              <label>
+                sender_role
+                <select name="sender_role">
+                  <option value="USER">USER</option>
+                  <option value="AGENT">AGENT</option>
+                  <option value="BOT">BOT</option>
+                </select>
+              </label>
+              <label>
+                Texto
+                <input name="text" value="Hola, necesito info del plan" required />
+              </label>
+              <label>
+                provider
+                <input name="provider" value="mock" required />
+              </label>
+              <button class="action-btn" type="submit">Enviar evento</button>
+            </form>
+            <pre id="simulatorResult" class="result-box"></pre>
+          </article>
+          <article class="panel">
+            <h2>🔄 Seed rápido</h2>
+            <button id="seedButton" class="action-btn warn">Regenerar dataset demo</button>
+            <pre id="seedResult" class="result-box"></pre>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <aside class="drawer" id="detailDrawer">
+      <div class="drawer-header">
+        <h3>💬 Detalle conversación</h3>
+        <button id="closeDrawer" class="ghost-btn">✕ Cerrar</button>
+      </div>
+      <div id="detailMeta" class="detail-meta"></div>
+      <div style="padding: 0 12px;">
+        <label for="detailAgentSelect" style="display:block; margin-bottom:4px; font-size:11px;">Asignar Agente:</label>
+        <select id="detailAgentSelect" style="width:100%; margin-bottom:8px;"></select>
+      </div>
+      <div id="detailMetrics" class="detail-metrics"></div>
+      <div id="detailInsights" class="insights-box"></div>
+      <div id="detailMessages" class="messages"></div>
+      <form id="sendMessageForm" class="send-row">
+        <select id="messageSender">
+          <option value="AGENT">AGENT</option>
+          <option value="BOT">BOT</option>
+          <option value="USER">USER</option>
+        </select>
+        <input id="messageText" placeholder="Escribe un mensaje..." required />
+        <button class="action-btn" type="submit">Enviar</button>
+      </form>
+      <div class="drawer-actions">
+        <button id="analyzeButton" class="action-btn">Analizar con AI</button>
+        <select id="detailStatusSelect" style="width:auto; flex:1;">
+            <option value="NEW">NEW</option>
+            <option value="CONTACTED">CONTACTED</option>
+            <option value="INTERESTED">INTERESTED</option>
+            <option value="NEGOTIATION">NEGOTIATION</option>
+            <option value="REENGAGEMENT">REENGAGEMENT</option>
+            <option value="SUPPORT">SUPPORT</option>
+            <option value="CLOSED">CLOSED</option>
+        </select>
+        <button id="updateStatusBtn" class="ghost-btn">Cambiar Estado</button>
+      </div>
+    </aside>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

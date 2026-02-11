@@ -1,0 +1,892 @@
+{
+  "project": {
+    "name": "WhatsApp Control Tower CRM (Hackathon 1-Day MVP)",
+    "tagline": "Dashboard simple y accionable para seguimiento por estados y evaluación de agentes en WhatsApp, con Insights (Gemini) y datos simulados compatibles con Meta Cloud API.",
+    "problem_summary": {
+      "context": "Empresa SaaS con ~80 clientes. La comunicación y seguimiento por WhatsApp es el dolor principal. Ya existen bots estandarizados (TheTeta) y WhatsApp Business, y muchos clientes usan CRMs complejos (HubSpot/otros) difíciles de operar.",
+      "pain_points": [
+        "No se ve rápido qué está fallando (demoras, no-respuesta, negativos, reaperturas).",
+        "CRMs actuales son bonitos pero complejos y poco accionables para WhatsApp.",
+        "Difícil evaluar desempeño real de agentes con métricas claras.",
+        "Se necesita seguimiento por estados y alertas de riesgo en tiempo real."
+      ],
+      "mvp_value": "Un dashboard ultra simple para detectar fallas + priorizar conversaciones + medir agentes con KPIs universales."
+    },
+    "mvp_goal_1_day": "Entregar una demo completa basada en datos falsos: Inbox por estados + Dashboard de KPIs orientados a fallas + Ranking agentes + Insights con Gemini + simulación de webhooks estilo Meta.",
+    "non_goals": [
+      "Conectar a Meta Cloud API en hackathon (se deja listo el adaptador y payload compatible).",
+      "Automatización real de envío de mensajes por WhatsApp (solo recepción simulada + UI simulador).",
+      "Multi-tenant, billing, roles complejos."
+    ]
+  },
+  "product_scope": {
+    "mvp_features": [
+      {
+        "id": "F-DASH-01",
+        "name": "Dashboard (lo más importante)",
+        "description": "Vista principal con KPIs, fallas, agentes y funnel por estados.",
+        "must_have": true
+      },
+      {
+        "id": "F-INBOX-01",
+        "name": "Inbox por estados",
+        "description": "Lista de conversaciones con estados (NEW/FOLLOW_UP/CLOSED), riesgo, agente asignado y acciones rápidas.",
+        "must_have": true
+      },
+      {
+        "id": "F-AGENTS-01",
+        "name": "Evaluación de agentes",
+        "description": "Ranking de agentes con SLA, FRT, backlog, negativos, reaperturas.",
+        "must_have": true
+      },
+      {
+        "id": "F-AI-01",
+        "name": "Insights con Gemini",
+        "description": "Resumen + sentimiento + tags/razón principal/next step para cada conversación.",
+        "must_have": true
+      },
+      {
+        "id": "F-SEED-01",
+        "name": "Generación de datos falsos (realistas)",
+        "description": "Script para crear clientes, agentes, conversaciones tipo WhatsApp, bot estándar, eventos (venta ganada/perdida), horarios y negativos.",
+        "must_have": true
+      },
+      {
+        "id": "F-INTEGRATION-01",
+        "name": "Compatibilidad futura con Meta",
+        "description": "Estructura de webhook y normalización de payload compatible con Meta Cloud API, para conectar luego fácil.",
+        "must_have": true
+      }
+    ],
+    "demo_narrative": [
+      "Abrimos Dashboard: se ven 6 KPIs críticos (fallas) y alertas.",
+      "Entramos a 'En riesgo': lista accionable de conversaciones con demora/sentimiento negativo/no respuesta.",
+      "Vemos funnel por estados NEW->FOLLOW_UP->CLOSED y tiempos promedio.",
+      "Vamos a 'Agentes': ranking de desempeño + quién está fallando (SLA, negativos, backlog).",
+      "Abrimos una conversación: se ve chat + botón Analizar (Gemini) + resumen + sentimiento + objeción + próximo paso.",
+      "Mostramos que los datos provienen de un simulador compatible con webhooks Meta (listo para integrar)."
+    ]
+  },
+  "dashboard_design": {
+    "principle": "Anti-CRM complejo: 10 segundos para entender qué está mal y qué hacer.",
+    "layout": {
+      "page": "Dashboard (Home)",
+      "sections": [
+        {
+          "id": "S1_TOP_KPIS",
+          "title": "KPIs críticos (6 tarjetas)",
+          "cards": [
+            {
+              "kpi_id": "KPI_NEW_TODAY",
+              "label": "Conversaciones nuevas (hoy)",
+              "visual": "big_number + delta_vs_yesterday"
+            },
+            {
+              "kpi_id": "KPI_BACKLOG_PENDING",
+              "label": "Pendientes (Backlog)",
+              "visual": "big_number + breakdown_by_status"
+            },
+            {
+              "kpi_id": "KPI_AT_RISK",
+              "label": "En riesgo",
+              "visual": "big_number + reason_split"
+            },
+            {
+              "kpi_id": "KPI_FRT_MEDIAN",
+              "label": "Primera respuesta (mediana)",
+              "visual": "time_value + SLA_badge"
+            },
+            {
+              "kpi_id": "KPI_SLA_COMPLIANCE",
+              "label": "% Cumplimiento SLA",
+              "visual": "percentage + gauge"
+            },
+            {
+              "kpi_id": "KPI_NEGATIVE_RATE",
+              "label": "% Sentimiento negativo",
+              "visual": "percentage + trend_sparkline"
+            }
+          ]
+        },
+        {
+          "id": "S2_WHERE_FAILING",
+          "title": "Dónde estamos fallando (accionable)",
+          "widgets": [
+            {
+              "widget_id": "W_TOP_FAIL_REASONS",
+              "type": "bar_chart",
+              "title": "Top 5 motivos (tags)",
+              "data_source": "AGG_TOP_TAGS_NEGATIVE_AND_LOST"
+            },
+            {
+              "widget_id": "W_AT_RISK_TABLE",
+              "type": "table",
+              "title": "Conversaciones en riesgo (prioridad)",
+              "columns": [
+                "cliente",
+                "telefono",
+                "estado",
+                "agente",
+                "min_sin_respuesta",
+                "sentimiento",
+                "motivo_tag",
+                "accion"
+              ],
+              "actions": ["abrir", "asignar_agente", "cambiar_estado"]
+            }
+          ]
+        },
+        {
+          "id": "S3_FUNNEL_STATUS",
+          "title": "Estados y tiempos",
+          "widgets": [
+            {
+              "widget_id": "W_STATUS_FUNNEL",
+              "type": "funnel",
+              "title": "NEW → FOLLOW_UP → CLOSED",
+              "data_source": "AGG_STATUS_COUNTS"
+            },
+            {
+              "widget_id": "W_STAGE_TIMES",
+              "type": "table",
+              "title": "Tiempo promedio por etapa",
+              "columns": ["etapa", "avg_time", "median_time", "%_SLA"]
+            }
+          ]
+        },
+        {
+          "id": "S4_AGENTS",
+          "title": "Agentes (quién está fallando)",
+          "widgets": [
+            {
+              "widget_id": "W_AGENT_RANKING",
+              "type": "table",
+              "title": "Ranking de agentes",
+              "columns": [
+                "agente",
+                "sla_compliance",
+                "frt_median",
+                "backlog_asignado",
+                "negative_rate",
+                "reopen_rate",
+                "quality_score"
+              ],
+              "sorting_default": "quality_score asc"
+            }
+          ]
+        },
+        {
+          "id": "S5_TRAFFIC_TIME",
+          "title": "Contexto operativo",
+          "widgets": [
+            {
+              "widget_id": "W_OUT_OF_HOURS_RATE",
+              "type": "card",
+              "title": "% Mensajes fuera de horario",
+              "data_source": "KPI_OUT_OF_HOURS_RATE"
+            },
+            {
+              "widget_id": "W_MESSAGES_BY_HOUR",
+              "type": "line_chart",
+              "title": "Volumen por hora (picos)",
+              "data_source": "AGG_MESSAGES_BY_HOUR"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "kpis": {
+    "business_hours": {
+      "timezone": "America/Bogota",
+      "default_schedule": {
+        "mon_fri": { "start": "08:00", "end": "18:00" },
+        "sat": { "start": "08:00", "end": "13:00" },
+        "sun": "closed"
+      },
+      "note": "En KPI de tiempos se reporta: dentro de horario y global."
+    },
+    "slas": {
+      "first_response_time_minutes": 10,
+      "response_time_minutes": 15,
+      "overdue_new_minutes": 15,
+      "overdue_followup_minutes": 60,
+      "note": "Ajustable por empresa; para demo se usa estándar simple."
+    },
+    "kpi_catalog": [
+      {
+        "id": "KPI_NEW_TODAY",
+        "category": "Operación",
+        "name": "Conversaciones nuevas (hoy)",
+        "definition": "Número de conversaciones creadas hoy.",
+        "formula": "count(conversations where created_at in today)",
+        "visual": "card_big_number",
+        "good_bad": "context"
+      },
+      {
+        "id": "KPI_BACKLOG_PENDING",
+        "category": "Operación",
+        "name": "Pendientes (Backlog)",
+        "definition": "Conversaciones que no están cerradas y requieren acción.",
+        "formula": "count(conversations where status in [NEW, FOLLOW_UP])",
+        "visual": "card_big_number + breakdown",
+        "good_bad": "bad_if_high"
+      },
+      {
+        "id": "KPI_AT_RISK",
+        "category": "Fallas",
+        "name": "Conversaciones en riesgo",
+        "definition": "Conversaciones con alta probabilidad de pérdida por demora, sentimiento negativo o reapertura.",
+        "formula": "count(conversations where risk_flag=true)",
+        "risk_rules": [
+          "no_agent_reply_yet AND age_minutes_in_business_hours > overdue_new_minutes",
+          "status=FOLLOW_UP AND minutes_since_last_agent_reply_in_business_hours > overdue_followup_minutes",
+          "sentiment_label=NEGATIVE",
+          "reopened_in_last_7_days=true"
+        ],
+        "visual": "card + table_drilldown",
+        "good_bad": "bad_if_high"
+      },
+      {
+        "id": "KPI_FRT_MEDIAN",
+        "category": "Tiempos",
+        "name": "FRT mediana (primera respuesta)",
+        "definition": "Mediana del tiempo desde primer mensaje del cliente hasta primera respuesta del agente/bot humano.",
+        "formula": "median(first_agent_reply_at - first_user_message_at) dentro de horario",
+        "visual": "time_card + SLA_badge",
+        "good_bad": "bad_if_above_SLA"
+      },
+      {
+        "id": "KPI_ART_AVG",
+        "category": "Tiempos",
+        "name": "ART promedio (tiempo respuesta)",
+        "definition": "Promedio de tiempo de respuesta del agente a mensajes del cliente.",
+        "formula": "avg(agent_reply_ts - previous_user_message_ts) dentro de horario",
+        "visual": "time_card",
+        "good_bad": "bad_if_high"
+      },
+      {
+        "id": "KPI_TIME_TO_RESOLUTION",
+        "category": "Tiempos",
+        "name": "Tiempo a resolución",
+        "definition": "Tiempo promedio/mediana para cerrar conversaciones.",
+        "formula": "avg/median(closed_at - created_at) dentro de horario",
+        "visual": "time_card + by_stage",
+        "good_bad": "bad_if_high"
+      },
+      {
+        "id": "KPI_SLA_COMPLIANCE",
+        "category": "Calidad",
+        "name": "% Cumplimiento SLA",
+        "definition": "Porcentaje de conversaciones que cumplen el SLA de primera respuesta.",
+        "formula": "count(conversations with FRT<=SLA) / count(conversations with agent_reply)",
+        "visual": "gauge + trend",
+        "good_bad": "bad_if_low"
+      },
+      {
+        "id": "KPI_NEGATIVE_RATE",
+        "category": "Calidad",
+        "name": "% Sentimiento negativo",
+        "definition": "Porcentaje de conversaciones con sentimiento NEGATIVE.",
+        "formula": "count(conversations sentiment=NEGATIVE)/count(conversations analyzed)",
+        "visual": "card + top_tags",
+        "good_bad": "bad_if_high"
+      },
+      {
+        "id": "KPI_NO_RESPONSE_RATE",
+        "category": "Fallas",
+        "name": "Tasa de no respuesta",
+        "definition": "Conversaciones donde el cliente escribe y no hay respuesta del agente en el umbral.",
+        "formula": "count(conversations no_agent_reply AND age_in_business_hours>overdue_new_minutes) / count(conversations NEW)",
+        "visual": "card + drilldown_table",
+        "good_bad": "bad_if_high"
+      },
+      {
+        "id": "KPI_REOPEN_RATE",
+        "category": "Fallas",
+        "name": "Tasa de reaperturas",
+        "definition": "Conversaciones cerradas que vuelven a abrirse dentro de 7 días.",
+        "formula": "count(reopened_in_7d)/count(closed_in_7d)",
+        "visual": "card + table",
+        "good_bad": "bad_if_high"
+      },
+      {
+        "id": "KPI_OUT_OF_HOURS_RATE",
+        "category": "Contexto",
+        "name": "% Mensajes fuera de horario",
+        "definition": "Porcentaje de mensajes entrantes del cliente fuera del horario laboral.",
+        "formula": "count(user_messages_out_of_hours)/count(all_user_messages)",
+        "visual": "card",
+        "good_bad": "context"
+      },
+      {
+        "id": "KPI_LOST_RATE",
+        "category": "Resultados",
+        "name": "% Perdidas (Lost)",
+        "definition": "Porcentaje de conversaciones marcadas como perdidas/canceladas.",
+        "formula": "count(conversations outcome=LOST)/count(conversations with outcome)",
+        "visual": "card + reasons",
+        "good_bad": "bad_if_high",
+        "note": "Para MVP se marca outcome manual o por seed; luego se integra con ventas."
+      }
+    ],
+    "agent_metrics": [
+      {
+        "id": "AGENT_SLA_COMPLIANCE",
+        "name": "% SLA por agente",
+        "formula": "count(conversations assigned_to_agent with FRT<=SLA)/count(conversations assigned_to_agent with agent_reply)",
+        "visual": "table_column"
+      },
+      {
+        "id": "AGENT_BACKLOG",
+        "name": "Backlog asignado",
+        "formula": "count(conversations assigned_to_agent where status in [NEW,FOLLOW_UP])",
+        "visual": "table_column"
+      },
+      {
+        "id": "AGENT_NEGATIVE_RATE",
+        "name": "% negativo por agente",
+        "formula": "count(conversations assigned_to_agent sentiment=NEGATIVE)/count(conversations assigned_to_agent analyzed)",
+        "visual": "table_column"
+      },
+      {
+        "id": "AGENT_REOPEN_RATE",
+        "name": "Reaperturas por agente",
+        "formula": "count(reopened conversations previously assigned_to_agent)/count(closed conversations assigned_to_agent)",
+        "visual": "table_column"
+      },
+      {
+        "id": "AGENT_QUALITY_SCORE",
+        "name": "Quality Score (simple)",
+        "definition": "Score para ranking orientado a fallas (más bajo = peor).",
+        "formula": "100 - (40*overdue_rate + 30*negative_rate + 20*reopen_rate + 10*(frt_median_minutes/SLA_minutes))",
+        "visual": "table_column",
+        "note": "Normalizar a 0-100; para demo basta con algo consistente."
+      }
+    ]
+  },
+  "data_simulation": {
+    "strategy": "Datos falsos realistas + simulador estilo WhatsApp + payload compatible con Meta.",
+    "entities_to_generate": {
+      "agents": 6,
+      "clients": 120,
+      "conversations": 220,
+      "messages_per_conversation": { "min": 6, "max": 25 }
+    },
+    "scenarios": [
+      {
+        "id": "SCN_01_PRICE_OBJECTION",
+        "name": "Objeción por precio",
+        "expected": ["FOLLOW_UP", "NEGATIVE sometimes", "tags: precio, descuento"],
+        "sample_flow": [
+          "USER: Hola, ¿cuánto vale?",
+          "BOT: ¿Cuántas unidades necesitas?",
+          "USER: 200, pero está caro…",
+          "AGENT: Te ofrezco paquete básico con descuento por volumen."
+        ]
+      },
+      {
+        "id": "SCN_02_DELAY_COMPLAINT",
+        "name": "Queja por demora",
+        "expected": ["NEGATIVE", "risk_flag true", "tags: demora, soporte"],
+        "sample_flow": [
+          "USER: Llevo 2 días esperando respuesta",
+          "AGENT: Disculpa, ya reviso tu caso",
+          "USER: Necesito solución hoy"
+        ]
+      },
+      {
+        "id": "SCN_03_WON_SALE",
+        "name": "Venta ganada",
+        "expected": ["POSITIVE", "outcome WON", "CLOSED"],
+        "sample_flow": [
+          "USER: Me interesa el plan",
+          "AGENT: Te comparto link de pago y activación",
+          "USER: Listo, pagado",
+          "AGENT: Perfecto, activado ✅"
+        ]
+      },
+      {
+        "id": "SCN_04_LOST_SALE",
+        "name": "Venta perdida / cancelación",
+        "expected": ["NEUTRAL/NEGATIVE", "outcome LOST", "tags: precio o demora"],
+        "sample_flow": [
+          "USER: Lo pensé mejor y no",
+          "AGENT: ¿Qué te detuvo?",
+          "USER: Está caro"
+        ]
+      },
+      {
+        "id": "SCN_05_REOPENED",
+        "name": "Caso reabierto",
+        "expected": ["reopen true", "risk_flag true"],
+        "sample_flow": [
+          "USER: Gracias, resuelto",
+          "AGENT: Cerramos el caso",
+          "USER (3 días después): Volvió el problema"
+        ]
+      }
+    ],
+    "business_hours_behavior": {
+      "generate_out_of_hours_messages_pct": 0.22,
+      "generate_slow_first_response_pct": 0.18,
+      "generate_no_response_pct": 0.08,
+      "note": "Esto crea 'dolor real' en el dashboard: demoras, no-respuesta, negativos."
+    },
+    "meta_compatibility": {
+      "payload_style": "Meta Cloud API (simplificado)",
+      "normalized_event_contract": {
+        "provider": "meta|mock",
+        "wa_id": "string (telefono en formato internacional)",
+        "message_id": "string",
+        "timestamp": "unix_seconds or ISO",
+        "direction": "inbound|outbound",
+        "message_type": "text",
+        "text": "string"
+      },
+      "note": "En MVP se usa /webhook/mock con el mismo contrato normalizado; luego se conecta el adaptador meta->normalized."
+    }
+  },
+  "ai_gemini": {
+    "provider": "Google Gemini",
+    "preferred_models": [
+      "gemini-2.5-flash (rápido para hackathon)",
+      "gemini-1.5-flash (fallback)"
+    ],
+    "use_cases": [
+      "sentiment_label + sentiment_score",
+      "summary_bullets (max 5)",
+      "key_points: need, objection, urgency, next_step",
+      "tags (max 5)"
+    ],
+    "context_policy": {
+      "if_no_summary": "use_last_30_messages",
+      "if_summary_exists": "use_summary_plus_last_5_messages"
+    },
+    "output_contract": {
+      "format": "STRICT_JSON",
+      "schema": {
+        "summary_bullets": "array<string>(max 5)",
+        "sentiment_label": "POSITIVE|NEUTRAL|NEGATIVE",
+        "sentiment_score": "int 1-10",
+        "key_points": {
+          "need": "string",
+          "objection": "string",
+          "urgency": "string",
+          "next_step": "string"
+        },
+        "tags": "array<string>(max 5)"
+      }
+    },
+    "prompt_templates": {
+      "system": "Eres un analista de conversaciones de WhatsApp para un dashboard de seguimiento. Responde SOLO con JSON válido.",
+      "user_template": [
+        "CONVERSATION_CONTEXT:",
+        "{context_block}",
+        "",
+        "Devuelve JSON estricto con:",
+        "- summary_bullets (máx 5, accionables)",
+        "- sentiment_label (POSITIVE/NEUTRAL/NEGATIVE)",
+        "- sentiment_score (1-10)",
+        "- key_points: need, objection, urgency, next_step",
+        "- tags (máx 5)",
+        "",
+        "Reglas:",
+        "1) No inventes datos; si falta info deja string vacío.",
+        "2) No agregues texto fuera del JSON."
+      ]
+    },
+    "fail_safe": {
+      "retry_on_json_error": 1,
+      "fallback_mock_mode": true,
+      "mock_output_behavior": "Genera insights coherentes basados en keywords si Gemini falla (para no romper la demo)."
+    }
+  },
+  "tech_stack": {
+    "goal": "Rápido, nube fácil, demo estable.",
+    "backend": {
+      "language": "Python",
+      "framework": "FastAPI",
+      "db": "SQLite (hackathon) / PostgreSQL (post-hackathon)",
+      "orm": "SQLModel",
+      "background_jobs": "simple in-process (hackathon) o Celery/Redis (futuro)",
+      "deployment": ["Render", "Railway", "Fly.io"],
+      "api_style": "REST JSON"
+    },
+    "frontend": {
+      "framework": "Next.js + Tailwind",
+      "charts": "Chart.js (simple) o ECharts",
+      "deployment": ["Vercel", "Netlify"],
+      "ui_priority": "Dashboard limpio + tablas accionables"
+    },
+    "ai": {
+      "sdk": "google-genai (Python) o google.generativeai",
+      "storage": "guardar summary_json y sentiment en conversation"
+    }
+  },
+  "data_model": {
+    "enums": {
+      "ConversationStatus": ["NEW", "FOLLOW_UP", "CLOSED"],
+      "MessageSender": ["USER", "BOT", "AGENT"],
+      "Outcome": ["UNKNOWN", "WON", "LOST", "UNQUALIFIED"],
+      "SentimentLabel": ["POSITIVE", "NEUTRAL", "NEGATIVE"]
+    },
+    "tables": [
+      {
+        "name": "agents",
+        "fields": [
+          { "name": "id", "type": "uuid", "pk": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "active", "type": "bool", "default": true }
+        ]
+      },
+      {
+        "name": "clients",
+        "fields": [
+          { "name": "id", "type": "uuid", "pk": true },
+          { "name": "name", "type": "string" },
+          { "name": "phone", "type": "string", "unique": true, "index": true },
+          { "name": "company", "type": "string", "nullable": true },
+          { "name": "city", "type": "string", "default": "Cúcuta" },
+          { "name": "created_at", "type": "datetime" }
+        ]
+      },
+      {
+        "name": "conversations",
+        "fields": [
+          { "name": "id", "type": "uuid", "pk": true },
+          { "name": "client_id", "type": "uuid", "fk": "clients.id" },
+          { "name": "status", "type": "enum:ConversationStatus", "default": "NEW" },
+          { "name": "assigned_agent_id", "type": "uuid", "fk": "agents.id", "nullable": true },
+          { "name": "outcome", "type": "enum:Outcome", "default": "UNKNOWN" },
+          { "name": "created_at", "type": "datetime", "index": true },
+          { "name": "updated_at", "type": "datetime" },
+          { "name": "closed_at", "type": "datetime", "nullable": true },
+          { "name": "reopened_count", "type": "int", "default": 0 },
+          { "name": "last_message_at", "type": "datetime", "index": true },
+          { "name": "first_user_message_at", "type": "datetime", "nullable": true },
+          { "name": "first_agent_reply_at", "type": "datetime", "nullable": true },
+          { "name": "last_agent_reply_at", "type": "datetime", "nullable": true },
+          { "name": "summary_json", "type": "json", "nullable": true },
+          { "name": "sentiment_label", "type": "enum:SentimentLabel", "nullable": true },
+          { "name": "sentiment_score", "type": "int", "nullable": true },
+          { "name": "tags", "type": "json", "nullable": true },
+          { "name": "risk_flag", "type": "bool", "default": false },
+          { "name": "risk_reasons", "type": "json", "nullable": true }
+        ]
+      },
+      {
+        "name": "messages",
+        "fields": [
+          { "name": "id", "type": "uuid", "pk": true },
+          { "name": "conversation_id", "type": "uuid", "fk": "conversations.id", "index": true },
+          { "name": "sender", "type": "enum:MessageSender" },
+          { "name": "text", "type": "string" },
+          { "name": "ts", "type": "datetime", "index": true },
+          { "name": "out_of_hours", "type": "bool", "default": false },
+          { "name": "provider", "type": "string", "default": "mock" },
+          { "name": "provider_message_id", "type": "string", "nullable": true }
+        ]
+      }
+    ]
+  },
+  "api_endpoints": {
+    "dashboard": [
+      {
+        "method": "GET",
+        "path": "/dashboard/summary",
+        "purpose": "Devuelve KPIs top + breakdowns para el Home.",
+        "returns": {
+          "top_cards": "array",
+          "at_risk_table": "array",
+          "top_fail_tags": "array",
+          "status_funnel": "object",
+          "agent_ranking": "array",
+          "out_of_hours_rate": "number",
+          "messages_by_hour": "array"
+        }
+      }
+    ],
+    "inbox": [
+      {
+        "method": "GET",
+        "path": "/conversations",
+        "purpose": "Inbox por estados con filtros.",
+        "query": ["status", "assigned_agent_id", "risk_flag", "q"],
+        "returns": "array"
+      },
+      {
+        "method": "GET",
+        "path": "/conversations/{id}",
+        "purpose": "Detalle: conversación + mensajes + insights + métricas calculadas.",
+        "returns": "object"
+      },
+      {
+        "method": "PATCH",
+        "path": "/conversations/{id}",
+        "purpose": "Actualizar estado, asignación, outcome (opcional).",
+        "body": { "status": "FOLLOW_UP", "assigned_agent_id": "uuid", "outcome": "WON|LOST|UNKNOWN" },
+        "returns": { "ok": true }
+      }
+    ],
+    "messages": [
+      {
+        "method": "POST",
+        "path": "/webhook/mock",
+        "purpose": "Entrada simulada tipo Meta (normalizada) para crear mensajes y conversaciones.",
+        "body_example": {
+          "provider": "mock",
+          "wa_id": "573001112233",
+          "message_id": "wamid.mock.123",
+          "timestamp": "2026-02-11T14:30:00-05:00",
+          "direction": "inbound",
+          "message_type": "text",
+          "text": "Hola, necesito info del plan",
+          "sender_role": "USER"
+        },
+        "returns": { "conversation_id": "uuid", "message_id": "uuid" }
+      },
+      {
+        "method": "POST",
+        "path": "/conversations/{id}/messages",
+        "purpose": "Simulador UI: agregar mensaje como USER/BOT/AGENT.",
+        "body_example": { "sender": "AGENT", "text": "Te ayudo con eso", "ts": "now" },
+        "returns": { "message_id": "uuid" }
+      }
+    ],
+    "ai": [
+      {
+        "method": "POST",
+        "path": "/conversations/{id}/analyze",
+        "purpose": "Genera insights con Gemini y actualiza risk_flag/tags/sentimiento.",
+        "body": { "force": false, "mock": false },
+        "returns": "summary_json"
+      }
+    ],
+    "seed": [
+      {
+        "method": "POST",
+        "path": "/seed",
+        "purpose": "Genera dataset completo falso para demo (clientes, agentes, conversaciones, mensajes, outcomes, fallas).",
+        "body": {
+          "agents": 6,
+          "clients": 120,
+          "conversations": 220,
+          "min_messages": 6,
+          "max_messages": 25,
+          "run_ai_on_pct": 0.35
+        },
+        "returns": { "ok": true, "stats": "object" }
+      }
+    ]
+  },
+  "risk_and_priority_logic": {
+    "risk_flag_rules": [
+      {
+        "id": "RISK_NO_FIRST_REPLY",
+        "when": "first_agent_reply_at is null AND age_minutes_in_business_hours > slas.overdue_new_minutes",
+        "reason": "Sin primera respuesta"
+      },
+      {
+        "id": "RISK_FOLLOWUP_STALE",
+        "when": "status=FOLLOW_UP AND minutes_since_last_agent_reply_in_business_hours > slas.overdue_followup_minutes",
+        "reason": "Seguimiento congelado"
+      },
+      {
+        "id": "RISK_NEGATIVE_SENTIMENT",
+        "when": "sentiment_label=NEGATIVE",
+        "reason": "Sentimiento negativo"
+      },
+      {
+        "id": "RISK_REOPEN",
+        "when": "reopened_count>0 AND reopened_in_last_7_days=true",
+        "reason": "Caso reabierto"
+      }
+    ],
+    "priority_score_demo": {
+      "formula": "priority = 40*(is_overdue) + 30*(sentiment_negative) + 20*(reopened_recent) + 10*(high_value_lead_tag)",
+      "purpose": "Ordenar tabla 'En riesgo' para que sea accionable.",
+      "note": "En MVP el 'high_value_lead_tag' puede venir del seed o tags como 'plan_pro'."
+    }
+  },
+  "seed_script_blueprint": {
+    "goal": "Generar conversaciones realistas de WhatsApp con bot estándar + agentes, incluyendo fallas (demoras/no respuesta/negativos/reaperturas) para que el dashboard muestre dolor real.",
+    "fastest_approach": "Un comando que ejecute /seed y llene SQLite. Opcional: script Python standalone.",
+    "generation_rules": {
+      "names_pool": [
+        "Camila Rojas",
+        "Juan Pablo Arias",
+        "Sara Méndez",
+        "Andrés Torres",
+        "Valentina Suárez",
+        "Mateo Pineda",
+        "Laura Villamizar",
+        "David Hernández",
+        "Natalia Guerra",
+        "Santiago Peña"
+      ],
+      "companies_pool": [
+        "Ferretería La 30",
+        "Boutique Luna",
+        "Restaurante El Patio",
+        "Clínica Dental Sonríe",
+        "Academia FitPro",
+        "Tienda TechNova",
+        "Inmobiliaria Norte",
+        "Pastelería Dulce Arte"
+      ],
+      "cities_pool": ["Bogotá", "Medellín", "Cali", "Barranquilla", "Bucaramanga", "Cúcuta"],
+      "bot_persona": {
+        "name": "Bot TheTeta (simulado)",
+        "style": "Corto, guía por menú, pide datos mínimos, escala a agente cuando detecta objeción o frustración."
+      },
+      "message_templates": {
+        "intents": [
+          "precio",
+          "soporte",
+          "cancelacion",
+          "cotizacion",
+          "seguimiento_pedido",
+          "queja_demora",
+          "informacion_plan"
+        ],
+        "tags_map": {
+          "precio": ["precio", "descuento", "plan_basico"],
+          "soporte": ["soporte", "error", "urgente"],
+          "cancelacion": ["cancelacion", "devolucion", "garantia"],
+          "seguimiento_pedido": ["envio", "tracking", "demora"],
+          "queja_demora": ["demora", "molesto", "prioridad"],
+          "informacion_plan": ["plan_pro", "demo", "implementacion"]
+        }
+      },
+      "time_behavior": {
+        "spread_days": 14,
+        "peak_hours": [10, 12, 15, 17],
+        "out_of_hours_pct": 0.22
+      },
+      "failure_injection": {
+        "slow_first_response_pct": 0.18,
+        "no_response_pct": 0.08,
+        "negative_sentiment_pct": 0.22,
+        "reopen_pct": 0.10,
+        "lost_outcome_pct": 0.18
+      }
+    },
+    "seed_outputs_expected": [
+      "Conversaciones con backlog visible",
+      "Tabla 'En riesgo' con al menos 15 items",
+      "Al menos 1 agente con SLA muy bajo",
+      "Top 5 tags mostrando 'demora', 'precio', 'soporte'",
+      "Funnel con distribución realista: NEW 25%, FOLLOW_UP 45%, CLOSED 30%"
+    ]
+  },
+  "ui_pages": [
+    {
+      "route": "/",
+      "name": "Dashboard",
+      "primary": true,
+      "focus": "KPIs + fallas + agentes",
+      "widgets": [
+        "S1_TOP_KPIS",
+        "W_TOP_FAIL_REASONS",
+        "W_AT_RISK_TABLE",
+        "W_STATUS_FUNNEL",
+        "W_AGENT_RANKING",
+        "W_MESSAGES_BY_HOUR",
+        "W_OUT_OF_HOURS_RATE"
+      ]
+    },
+    {
+      "route": "/inbox",
+      "name": "Inbox",
+      "focus": "Operación por estados",
+      "filters": ["status", "risk_flag", "agent", "search"],
+      "table_columns": [
+        "cliente",
+        "estado",
+        "agente",
+        "último_mensaje",
+        "min_sin_respuesta",
+        "sentimiento",
+        "risk_badge",
+        "acciones"
+      ]
+    },
+    {
+      "route": "/agents",
+      "name": "Agentes",
+      "focus": "Evaluación y fallas por agente",
+      "table_columns": [
+        "agente",
+        "sla_compliance",
+        "frt_median",
+        "backlog",
+        "negative_rate",
+        "reopen_rate",
+        "quality_score"
+      ]
+    },
+    {
+      "route": "/conversations/:id",
+      "name": "Detalle",
+      "focus": "Chat + Insights + acciones",
+      "layout": "2-column",
+      "left": ["chat_thread", "send_message_box", "quick_actions"],
+      "right": ["status_agent_controls", "analyze_button", "insights_panel", "risk_panel"]
+    },
+    {
+      "route": "/simulator",
+      "name": "Simulador WhatsApp",
+      "focus": "Crear eventos rápidos estilo Meta",
+      "actions": ["send_inbound", "send_outbound", "simulate_delay", "simulate_angry_customer"]
+    }
+  ],
+  "deployment_plan_fast": {
+    "option_1_local_demo": {
+      "backend": "FastAPI local",
+      "frontend": "Next.js local",
+      "db": "SQLite local",
+      "why": "La demo es estable y rápida para hackathon."
+    },
+    "option_2_cloud_simple": {
+      "backend": "Render/Railway",
+      "frontend": "Vercel",
+      "db": "SQLite (archivo) o Postgres gratis",
+      "note": "Solo si el equipo alcanza; prioridad es el dashboard funcionando."
+    }
+  },
+  "definition_of_done": [
+    "Dashboard muestra 6 KPIs críticos + tablas accionables",
+    "Existe vista 'En riesgo' con conversaciones priorizadas",
+    "Ranking de agentes muestra quién falla (SLA bajo, negativos altos)",
+    "Seed genera dataset realista con fallas visibles",
+    "Simulador envía eventos con contrato normalizado compatible con Meta",
+    "Gemini analiza al menos 30% de conversaciones para insights (o mock fallback)"
+  ],
+  "timeboxed_execution_1_day": {
+    "hour_0_1": [
+      "Scaffold FastAPI + modelos DB + /seed",
+      "Crear /dashboard/summary (KPIs hardcode queries simples)"
+    ],
+    "hour_1_3": [
+      "UI Dashboard (cards + 2 charts + 2 tables)",
+      "UI Inbox + navegación"
+    ],
+    "hour_3_4": [
+      "Simulador + /webhook/mock compatible con contrato",
+      "Tabla 'En riesgo' con prioridad"
+    ],
+    "hour_4_6": [
+      "Integración Gemini /analyze + persistencia insights",
+      "Mostrar insights en detalle"
+    ],
+    "hour_6_7": [
+      "Página Agentes + quality_score",
+      "Pulir copy y visual (badges, colores, orden)"
+    ],
+    "hour_7_8": [
+      "Ensayo pitch + preparar demo dataset perfecto",
+      "Checklist de fallas: demora/no-respuesta/negativos/reaperturas visibles"
+    ]
+  }
+}

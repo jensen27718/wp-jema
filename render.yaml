@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: whatsapp-control-tower-crm
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:///./control_tower.db
+      - key: AUTO_SEED_ON_STARTUP
+        value: "true"
+      - key: AUTO_SEED_AGENTS
+        value: "4"
+      - key: AUTO_SEED_CLIENTS
+        value: "20"
+      - key: AUTO_SEED_CONVERSATIONS
+        value: "25"
+      - key: AUTO_SEED_MIN_MESSAGES
+        value: "3"
+      - key: AUTO_SEED_MAX_MESSAGES
+        value: "8"
+      - key: AUTO_SEED_RUN_AI_PCT
+        value: "0.10"
+      - key: PYTHONUNBUFFERED
+        value: "1"
