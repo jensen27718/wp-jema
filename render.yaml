@@ -11,19 +11,29 @@ services:
     envVars:
       - key: DATABASE_URL
         value: sqlite:///./control_tower.db
-      - key: AUTO_SEED_ON_STARTUP
+      - key: APP_ENV
+        value: production
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://your-domain.com
+      - key: APP_AUTH_USERNAME
+        sync: false
+      - key: APP_AUTH_PASSWORD
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: WASENDER_API_KEY
+        sync: false
+      - key: WASENDER_SESSION_ID
+        sync: false
+      - key: WASENDER_WEBHOOK_TOKEN
+        sync: false
+      - key: WASENDER_SYNC_ENABLED
         value: "true"
-      - key: AUTO_SEED_AGENTS
-        value: "4"
-      - key: AUTO_SEED_CLIENTS
-        value: "20"
-      - key: AUTO_SEED_CONVERSATIONS
-        value: "25"
-      - key: AUTO_SEED_MIN_MESSAGES
-        value: "3"
-      - key: AUTO_SEED_MAX_MESSAGES
-        value: "8"
-      - key: AUTO_SEED_RUN_AI_PCT
-        value: "0.10"
+      - key: WASENDER_PUSH_OUTBOUND
+        value: "true"
+      - key: ALLOW_DEMO_ROUTES
+        value: "false"
+      - key: AUTO_SEED_ON_STARTUP
+        value: "false"
       - key: PYTHONUNBUFFERED
         value: "1"

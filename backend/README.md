@@ -1,11 +1,23 @@
-# Backend MVP
+# Backend CRM WhatsApp (FastAPI)
 
-API FastAPI para el MVP "WhatsApp Control Tower CRM".
+Backend para operar con datos reales de WhatsApp por `wasenderapi.com` (no demo por defecto).
 
 ## Requisitos
 
-- Python 3.11+ (probado en 3.13)
+- Python 3.11+
 - Dependencias en `requirements.txt`
+
+## Configuracion de entorno
+
+1. Copia `.env.example` a `.env`.
+2. Configura como minimo:
+
+- `APP_AUTH_USERNAME`
+- `APP_AUTH_PASSWORD` (o `APP_AUTH_PASSWORD_HASH`)
+- `JWT_SECRET_KEY`
+- `WASENDER_API_KEY`
+- `WASENDER_SESSION_ID`
+- `WASENDER_WEBHOOK_TOKEN`
 
 ## Ejecutar local
 
@@ -15,56 +27,42 @@ pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --port 8000
 ```
 
-La UI estatica se sirve en `http://localhost:8000/`.
-La documentacion interactiva esta en `http://localhost:8000/docs`.
+UI: `http://localhost:8000/`  
+Docs: `http://localhost:8000/docs`
 
-## Endpoints implementados
+## Flujo implementado
 
-- `POST /seed`
+- Login con JWT (`POST /auth/login`).
+- Primera carga de inbox: `GET /conversations/recent-clients?limit=10` (solo numeros/clientes).
+- Al abrir una conversacion (`GET /conversations/{id}`), se sincroniza historial disponible desde Wasender (message logs) y se persiste en BD.
+- Nuevos mensajes entrantes por webhook: `POST /webhook/wasender` (token requerido).
+- Mensajes salientes desde la plataforma: `POST /conversations/{id}/messages` (envio real a Wasender + registro local).
+
+## Seguridad
+
+- Endpoints de negocio protegidos con Bearer token.
+- CORS restringido por `CORS_ALLOWED_ORIGINS`.
+- Webhook protegido por `X-Webhook-Token` o query `?token=...`.
+- Rutas demo (`/seed`, `/webhook/mock`) deshabilitadas por defecto (`ALLOW_DEMO_ROUTES=false`).
+
+Para usar hash de password en lugar de texto plano:
+
+```bash
+cd backend
+python scripts/generate_password_hash.py
+```
+
+Luego pega el valor en `APP_AUTH_PASSWORD_HASH` y deja vacio `APP_AUTH_PASSWORD`.
+
+## Endpoints principales
+
+- `POST /auth/login`
 - `GET /dashboard/summary`
+- `GET /conversations/recent-clients`
 - `GET /conversations`
 - `GET /conversations/{id}`
 - `PATCH /conversations/{id}`
 - `POST /conversations/{id}/messages`
 - `POST /conversations/{id}/analyze`
-- `POST /webhook/mock`
+- `POST /webhook/wasender`
 - `GET /health`
-
-## Variables de entorno
-
-- `DATABASE_URL` (default: `sqlite:///./control_tower.db`)
-- `AUTO_SEED_ON_STARTUP` (`true/false`)
-
-Si `AUTO_SEED_ON_STARTUP=true` y la base esta vacia, se genera dataset demo.
-
-Variables opcionales para ese auto-seed:
-
-- `AUTO_SEED_AGENTS`
-- `AUTO_SEED_CLIENTS`
-- `AUTO_SEED_CONVERSATIONS`
-- `AUTO_SEED_MIN_MESSAGES`
-- `AUTO_SEED_MAX_MESSAGES`
-- `AUTO_SEED_RUN_AI_PCT`
-
-En Render Free conviene usar volumen moderado (ej: 20 clientes, 25 conversaciones) y luego ejecutar `/seed` para dataset grande cuando ya este arriba.
-
-## Deploy en Render Free
-
-Este repo incluye `render.yaml` en la raiz.
-
-Pasos:
-
-1. Sube el repo a GitHub.
-2. En Render: `New +` -> `Blueprint`.
-3. Conecta el repo y rama.
-4. Render detecta `render.yaml` y crea el servicio.
-5. Espera deploy y abre la URL publica.
-
-Configuracion del servicio:
-
-- `rootDir`: `backend`
-- `buildCommand`: `pip install -r requirements.txt`
-- `startCommand`: `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-- `healthCheckPath`: `/health`
-
-Nota: en Free el filesystem es efimero. Si se reinicia, SQLite puede resetearse. El auto-seed evita una demo vacia.

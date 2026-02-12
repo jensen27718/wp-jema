@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -9,12 +10,14 @@ from statistics import median
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
 
+from .auth import AuthUser, LoginRequest, TokenResponse, authenticate_user, create_access_token, require_auth
+from .config import settings, validate_runtime_security
 from .database import create_db_and_tables, engine, get_session
 from .insights import analyze_messages
 from .models import (
@@ -41,6 +44,15 @@ from .services import (
     priority_for_conversation,
     recalc_risk,
     seed_database,
+)
+from .wasender import (
+    ProviderMessage,
+    WasenderClient,
+    WasenderError,
+    extract_webhook_chat_updates,
+    extract_webhook_messages,
+    normalize_wa_id,
+    normalize_provider_message,
 )
 
 
@@ -81,8 +93,15 @@ def _auto_seed_request_from_env() -> SeedRequest:
     )
 
 
+def _wasender_client() -> WasenderClient | None:
+    if not settings.wasender_api_key:
+        return None
+    return WasenderClient(base_url=settings.wasender_base_url, api_key=settings.wasender_api_key)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    validate_runtime_security()
     create_db_and_tables()
     auto_seed = os.getenv("AUTO_SEED_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
     if auto_seed:
@@ -95,17 +114,17 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="WhatsApp Control Tower CRM API",
-    version="0.1.0",
-    description="Hackathon MVP API for dashboard, inbox, agents and WhatsApp simulator.",
+    version="0.2.0",
+    description="Secure CRM API integrated with Wasender for real WhatsApp operations.",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Webhook-Token"],
 )
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
@@ -190,14 +209,18 @@ def _refresh_risk_flags(session: Session, conversations: list[Conversation], now
 
 
 def _upsert_client_by_phone(session: Session, wa_id: str) -> Client:
-    client = session.exec(select(Client).where(Client.phone == wa_id)).first()
+    normalized_wa_id = normalize_wa_id(wa_id)
+    if not normalized_wa_id:
+        raise HTTPException(status_code=400, detail="Invalid wa_id")
+
+    client = session.exec(select(Client).where(Client.phone == normalized_wa_id)).first()
     if client:
         return client
 
-    suffix = wa_id[-4:] if len(wa_id) >= 4 else wa_id
+    suffix = normalized_wa_id[-4:] if len(normalized_wa_id) >= 4 else normalized_wa_id
     client = Client(
         name=f"Cliente {suffix}",
-        phone=wa_id,
+        phone=normalized_wa_id,
         company=None,
         city="Cucuta",
         created_at=_utcnow(),
@@ -238,20 +261,27 @@ def _apply_message_to_conversation(
     sender: MessageSender,
     message_ts: datetime,
 ) -> None:
-    if sender == MessageSender.USER and conv.status == ConversationStatus.CLOSED:
-        conv.status = ConversationStatus.FOLLOW_UP
+    is_newest_message = conv.last_message_at is None or message_ts >= conv.last_message_at
+
+    if sender == MessageSender.USER and conv.status == ConversationStatus.CLOSED and is_newest_message:
+        conv.status = ConversationStatus.REENGAGEMENT
         conv.closed_at = None
         conv.reopened_count += 1
 
-    if sender == MessageSender.USER and not conv.first_user_message_at:
-        conv.first_user_message_at = message_ts
+    if sender == MessageSender.USER:
+        if conv.first_user_message_at is None or message_ts < conv.first_user_message_at:
+            conv.first_user_message_at = message_ts
 
     if sender == MessageSender.AGENT:
-        if conv.first_user_message_at and not conv.first_agent_reply_at:
+        if conv.first_user_message_at and (
+            conv.first_agent_reply_at is None or message_ts < conv.first_agent_reply_at
+        ):
             conv.first_agent_reply_at = message_ts
-        conv.last_agent_reply_at = message_ts
+        if conv.last_agent_reply_at is None or message_ts > conv.last_agent_reply_at:
+            conv.last_agent_reply_at = message_ts
 
-    conv.last_message_at = message_ts
+    if conv.last_message_at is None or message_ts > conv.last_message_at:
+        conv.last_message_at = message_ts
     conv.updated_at = _utcnow()
 
 
@@ -281,6 +311,212 @@ def _append_message(
     session.refresh(message)
     session.refresh(conv)
     return message
+
+
+def _message_exists(
+    session: Session,
+    conversation_id: UUID,
+    provider: str,
+    provider_message_id: str | None,
+    sender: MessageSender | None = None,
+    text: str | None = None,
+    ts: datetime | None = None,
+) -> bool:
+    if provider_message_id:
+        existing = session.exec(
+            select(Message.id).where(
+                Message.conversation_id == conversation_id,
+                Message.provider == provider,
+                Message.provider_message_id == provider_message_id,
+            )
+        ).first()
+        if existing:
+            return True
+
+    if sender is None or text is None or ts is None:
+        return False
+
+    fallback = session.exec(
+        select(Message.id).where(
+            Message.conversation_id == conversation_id,
+            Message.sender == sender,
+            Message.text == text,
+            Message.ts == ts,
+        )
+    ).first()
+    return bool(fallback)
+
+
+def _sync_conversation_with_wasender(session: Session, conv: Conversation) -> dict[str, int]:
+    if not settings.wasender_sync_enabled:
+        return {"imported": 0}
+    if not settings.wasender_api_key or not settings.wasender_session_id:
+        return {"imported": 0}
+
+    client = session.get(Client, conv.client_id)
+    if not client:
+        return {"imported": 0}
+
+    wasender_client = _wasender_client()
+    if not wasender_client:
+        return {"imported": 0}
+
+    try:
+        history = wasender_client.fetch_history_for_phone(
+            session_id=settings.wasender_session_id,
+            phone=client.phone,
+            per_page=settings.wasender_sync_page_size,
+            max_pages=settings.wasender_sync_max_pages,
+        )
+    except WasenderError:
+        return {"imported": 0}
+
+    imported = 0
+    for item in history:
+        if _message_exists(
+            session=session,
+            conversation_id=conv.id,
+            provider="wasender",
+            provider_message_id=item.provider_message_id,
+            sender=item.sender,
+            text=item.text,
+            ts=item.ts,
+        ):
+            continue
+        _append_message(
+            session=session,
+            conv=conv,
+            sender=item.sender,
+            text=item.text,
+            ts=item.ts,
+            provider="wasender",
+            provider_message_id=item.provider_message_id,
+        )
+        imported += 1
+    return {"imported": imported}
+
+
+def _push_outbound_to_wasender(phone: str, text: str) -> str | None:
+    if not settings.wasender_push_outbound:
+        return None
+    if not settings.wasender_api_key or not settings.wasender_session_id:
+        raise WasenderError("WASENDER_API_KEY and WASENDER_SESSION_ID are required to send outbound messages")
+
+    wasender_client = _wasender_client()
+    if not wasender_client:
+        raise WasenderError("Wasender client is unavailable")
+
+    payload = wasender_client.send_text_message(
+        session_id=settings.wasender_session_id,
+        phone=phone,
+        text=text,
+    )
+    message_id = payload.get("message_id") or payload.get("id")
+    if isinstance(message_id, dict):
+        message_id = message_id.get("id")
+    return str(message_id) if message_id is not None else None
+
+
+def _recent_clients_rows(
+    session: Session,
+    *,
+    limit: int,
+    q: str | None = None,
+) -> list[dict[str, Any]]:
+    conversations = session.exec(select(Conversation).order_by(Conversation.last_message_at.desc())).all()
+    clients_map, _ = _conv_lookup_maps(session)
+    q_lower = q.strip().lower() if q else None
+
+    with_user_messages = [conv for conv in conversations if conv.first_user_message_at is not None]
+    without_user_messages = [conv for conv in conversations if conv.first_user_message_at is None]
+    ordered_conversations = with_user_messages + without_user_messages
+
+    rows: list[dict[str, Any]] = []
+    seen_phones: set[str] = set()
+    for conv in ordered_conversations:
+        client = clients_map.get(conv.client_id)
+        if not client:
+            continue
+        if client.phone in seen_phones:
+            continue
+        if q_lower:
+            searchable = " ".join(filter(None, [client.name, client.phone, client.company or ""])).lower()
+            if q_lower not in searchable:
+                continue
+
+        seen_phones.add(client.phone)
+        rows.append(
+            {
+                "conversation_id": str(conv.id),
+                "client_name": client.name,
+                "phone": client.phone,
+                "last_seen_at": conv.last_message_at.isoformat(),
+                "status": conv.status.value,
+                "has_user_message": conv.first_user_message_at is not None,
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _bootstrap_recent_clients_from_provider(session: Session, limit: int) -> None:
+    if not settings.wasender_sync_enabled:
+        return
+    if not settings.wasender_api_key or not settings.wasender_session_id:
+        return
+
+    wasender_client = _wasender_client()
+    if not wasender_client:
+        return
+
+    try:
+        logs = wasender_client.fetch_message_logs(
+            settings.wasender_session_id,
+            page=1,
+            per_page=max(limit * 10, 50),
+        )
+    except WasenderError:
+        return
+
+    parsed: list[ProviderMessage] = []
+    for row in logs:
+        message = normalize_provider_message(row, default_sender=MessageSender.AGENT)
+        if not message:
+            continue
+        parsed.append(message)
+
+    parsed.sort(key=lambda item: item.ts, reverse=True)
+
+    seen: set[str] = set()
+    for item in parsed:
+        if item.wa_id in seen:
+            continue
+        seen.add(item.wa_id)
+
+        client = _upsert_client_by_phone(session, item.wa_id)
+        conv = _find_open_conversation(session, client.id) or _create_conversation(session, client.id, now=item.ts)
+
+        if not _message_exists(
+            session=session,
+            conversation_id=conv.id,
+            provider="wasender",
+            provider_message_id=item.provider_message_id,
+            sender=item.sender,
+            text=item.text,
+            ts=item.ts,
+        ):
+            _append_message(
+                session=session,
+                conv=conv,
+                sender=item.sender,
+                text=item.text,
+                ts=item.ts,
+                provider="wasender",
+                provider_message_id=item.provider_message_id,
+            )
+        if len(seen) >= limit:
+            break
 
 
 def _conv_lookup_maps(session: Session) -> tuple[dict[UUID, Client], dict[UUID, Agent]]:
@@ -517,6 +753,63 @@ def _conversation_metrics(messages: list[Message], conv: Conversation) -> dict[s
     }
 
 
+def _ensure_demo_routes_enabled() -> None:
+    if not settings.allow_demo_routes:
+        raise HTTPException(status_code=403, detail="Demo routes are disabled")
+
+
+def _verify_webhook_token(provided_token: str | None) -> None:
+    expected = settings.wasender_webhook_token
+    if not expected:
+        raise HTTPException(status_code=503, detail="Webhook token is not configured")
+    if not provided_token or not hmac.compare_digest(provided_token, expected):
+        raise HTTPException(status_code=401, detail="Invalid webhook token")
+
+
+def _ingest_provider_message(
+    session: Session,
+    provider_message: ProviderMessage,
+    *,
+    provider: str,
+) -> tuple[UUID, UUID] | None:
+    client = _upsert_client_by_phone(session, provider_message.wa_id)
+    conv = _find_open_conversation(session, client.id) or _create_conversation(session, client.id, now=provider_message.ts)
+
+    if _message_exists(
+        session=session,
+        conversation_id=conv.id,
+        provider=provider,
+        provider_message_id=provider_message.provider_message_id,
+        sender=provider_message.sender,
+        text=provider_message.text,
+        ts=provider_message.ts,
+    ):
+        return None
+
+    message = _append_message(
+        session=session,
+        conv=conv,
+        sender=provider_message.sender,
+        text=provider_message.text,
+        ts=provider_message.ts,
+        provider=provider,
+        provider_message_id=provider_message.provider_message_id,
+    )
+    return conv.id, message.id
+
+
+def _touch_chat_update(session: Session, wa_id: str, ts: datetime) -> UUID:
+    client = _upsert_client_by_phone(session, wa_id)
+    conv = _find_open_conversation(session, client.id) or _create_conversation(session, client.id, now=ts)
+    if conv.last_message_at < ts:
+        conv.last_message_at = ts
+        conv.updated_at = _utcnow()
+        recalc_risk(conv, now=conv.updated_at)
+        session.add(conv)
+        session.commit()
+    return conv.id
+
+
 @app.get("/", include_in_schema=False)
 def root():
     index_file = FRONTEND_DIR / "index.html"
@@ -530,14 +823,33 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/auth/login", response_model=TokenResponse)
+def auth_login(payload: LoginRequest) -> TokenResponse:
+    if not authenticate_user(payload.username, payload.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return create_access_token(payload.username)
+
+
 @app.post("/seed")
-def seed(payload: SeedRequest, session: Session = Depends(get_session)) -> dict[str, Any]:
+def seed(
+    payload: SeedRequest,
+    session: Session = Depends(get_session),
+    _: AuthUser = Depends(require_auth),
+) -> dict[str, Any]:
+    _ensure_demo_routes_enabled()
     stats = seed_database(session, payload)
     return {"ok": True, "stats": stats}
 
 
 @app.get("/dashboard/summary")
-def dashboard_summary(session: Session = Depends(get_session)) -> dict[str, Any]:
+def dashboard_summary(
+    session: Session = Depends(get_session),
+    _: AuthUser = Depends(require_auth),
+) -> dict[str, Any]:
     return _summary_payload(session)
 
 
@@ -548,6 +860,7 @@ def list_conversations(
     risk_flag: bool | None = None,
     q: str | None = Query(default=None, min_length=1),
     session: Session = Depends(get_session),
+    _: AuthUser = Depends(require_auth),
 ) -> list[dict[str, Any]]:
     now = _utcnow()
     conversations = session.exec(select(Conversation).order_by(Conversation.last_message_at.desc())).all()
@@ -586,15 +899,32 @@ def list_conversations(
     return rows
 
 
+@app.get("/conversations/recent-clients")
+def recent_clients(
+    limit: int = Query(default=10, ge=1, le=50),
+    q: str | None = Query(default=None, min_length=1),
+    session: Session = Depends(get_session),
+    _: AuthUser = Depends(require_auth),
+) -> list[dict[str, Any]]:
+    rows = _recent_clients_rows(session, limit=limit, q=q)
+    if rows:
+        return rows
+
+    _bootstrap_recent_clients_from_provider(session, limit)
+    return _recent_clients_rows(session, limit=limit, q=q)
+
+
 @app.get("/conversations/{conversation_id}")
 def get_conversation_detail(
     conversation_id: UUID,
     session: Session = Depends(get_session),
+    _: AuthUser = Depends(require_auth),
 ) -> dict[str, Any]:
     conv = session.get(Conversation, conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
+    _sync_conversation_with_wasender(session, conv)
     recalc_risk(conv, now=_utcnow())
     session.add(conv)
     session.commit()
@@ -619,6 +949,7 @@ def patch_conversation(
     conversation_id: UUID,
     payload: ConversationPatchRequest,
     session: Session = Depends(get_session),
+    _: AuthUser = Depends(require_auth),
 ) -> dict[str, Any]:
     conv = session.get(Conversation, conversation_id)
     if not conv:
@@ -658,6 +989,7 @@ def add_message(
     conversation_id: UUID,
     payload: AddMessageRequest,
     session: Session = Depends(get_session),
+    _: AuthUser = Depends(require_auth),
 ) -> dict[str, str]:
     conv = session.get(Conversation, conversation_id)
     if not conv:
@@ -667,6 +999,21 @@ def add_message(
     if not clean_text:
         raise HTTPException(status_code=400, detail="Message text cannot be empty")
 
+    provider = payload.provider
+    provider_message_id = payload.provider_message_id
+
+    client = session.get(Client, conv.client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    if payload.sender in {MessageSender.AGENT, MessageSender.BOT}:
+        try:
+            outbound_message_id = _push_outbound_to_wasender(client.phone, clean_text)
+        except WasenderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        provider = "wasender"
+        provider_message_id = outbound_message_id
+
     ts = _to_naive_utc(payload.ts) if payload.ts else _utcnow()
     message = _append_message(
         session=session,
@@ -674,14 +1021,19 @@ def add_message(
         sender=payload.sender,
         text=clean_text,
         ts=ts,
-        provider=payload.provider,
-        provider_message_id=payload.provider_message_id,
+        provider=provider,
+        provider_message_id=provider_message_id,
     )
     return {"conversation_id": str(conv.id), "message_id": str(message.id)}
 
 
 @app.post("/webhook/mock")
-def webhook_mock(payload: MockWebhookRequest, session: Session = Depends(get_session)) -> dict[str, str]:
+def webhook_mock(
+    payload: MockWebhookRequest,
+    session: Session = Depends(get_session),
+    _: AuthUser = Depends(require_auth),
+) -> dict[str, str]:
+    _ensure_demo_routes_enabled()
     sender_role = payload.sender_role.upper().strip()
     try:
         sender = MessageSender[sender_role]
@@ -708,11 +1060,50 @@ def webhook_mock(payload: MockWebhookRequest, session: Session = Depends(get_ses
     return {"conversation_id": str(conv.id), "message_id": str(message.id)}
 
 
+@app.post("/webhook/wasender")
+async def webhook_wasender(
+    request: Request,
+    webhook_token: str | None = Header(default=None, alias="X-Webhook-Token"),
+    query_token: str | None = Query(default=None, alias="token"),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _verify_webhook_token(webhook_token or query_token)
+
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    inserted = 0
+    conversation_ids: set[str] = set()
+
+    for provider_message in extract_webhook_messages(payload):
+        result = _ingest_provider_message(session, provider_message, provider="wasender")
+        if not result:
+            continue
+        conv_id, _ = result
+        inserted += 1
+        conversation_ids.add(str(conv_id))
+
+    for wa_id, ts in extract_webhook_chat_updates(payload):
+        conv_id = _touch_chat_update(session, wa_id, ts)
+        conversation_ids.add(str(conv_id))
+
+    return {
+        "ok": True,
+        "inserted_messages": inserted,
+        "conversations_touched": len(conversation_ids),
+    }
+
+
 @app.post("/conversations/{conversation_id}/analyze")
 def analyze_conversation(
     conversation_id: UUID,
     payload: AnalyzeRequest,
     session: Session = Depends(get_session),
+    _: AuthUser = Depends(require_auth),
 ) -> dict[str, Any]:
     conv = session.get(Conversation, conversation_id)
     if not conv:

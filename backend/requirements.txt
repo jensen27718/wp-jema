@@ -4,3 +4,5 @@ sqlmodel==0.0.24
 pytest==8.4.1
 httpx==0.28.1
 openai==1.65.1
+python-dotenv==1.0.1
+PyJWT==2.10.1

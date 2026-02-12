@@ -1,10 +1,21 @@
+const TOKEN_STORAGE_KEY = "crm_access_token";
+
 const state = {
   summary: null,
   selectedConversationId: null,
   selectedConversationDetail: null,
+  authToken: localStorage.getItem(TOKEN_STORAGE_KEY),
 };
 
-const views = ["dashboard", "inbox", "agents", "simulator"];
+const views = ["dashboard", "inbox", "agents"];
+
+const appShell = document.getElementById("appShell");
+const loginOverlay = document.getElementById("loginOverlay");
+const loginForm = document.getElementById("loginForm");
+const loginUsername = document.getElementById("loginUsername");
+const loginPassword = document.getElementById("loginPassword");
+const loginError = document.getElementById("loginError");
+const logoutBtn = document.getElementById("logoutBtn");
 
 const nav = document.getElementById("nav");
 const drawer = document.getElementById("detailDrawer");
@@ -27,18 +38,13 @@ const sendMessageForm = document.getElementById("sendMessageForm");
 const messageSender = document.getElementById("messageSender");
 const messageText = document.getElementById("messageText");
 const analyzeButton = document.getElementById("analyzeButton");
-const markFollowupButton = document.getElementById("markFollowupButton");
-const markClosedButton = document.getElementById("markClosedButton");
 
-const filterStatus = document.getElementById("filterStatus");
-const filterRisk = document.getElementById("filterRisk");
 const filterSearch = document.getElementById("filterSearch");
 const applyInboxFiltersBtn = document.getElementById("applyInboxFilters");
 
-const simulatorForm = document.getElementById("simulatorForm");
-const simulatorResult = document.getElementById("simulatorResult");
-const seedButton = document.getElementById("seedButton");
-const seedResult = document.getElementById("seedResult");
+const detailAgentSelect = document.getElementById("detailAgentSelect");
+const detailStatusSelect = document.getElementById("detailStatusSelect");
+const updateStatusBtn = document.getElementById("updateStatusBtn");
 
 function escapeHtml(value) {
   if (value === null || value === undefined) return "";
@@ -49,16 +55,57 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-async function fetchJson(path, options = {}) {
+function setToken(token) {
+  state.authToken = token || null;
+  if (state.authToken) {
+    localStorage.setItem(TOKEN_STORAGE_KEY, state.authToken);
+  } else {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  }
+}
+
+function showLogin(message = "") {
+  loginOverlay.classList.add("open");
+  appShell.classList.add("hidden");
+  loginError.textContent = message;
+  drawer.classList.remove("open");
+}
+
+function hideLogin() {
+  loginOverlay.classList.remove("open");
+  appShell.classList.remove("hidden");
+  loginError.textContent = "";
+}
+
+function logout() {
+  setToken(null);
+  showLogin("Sesion cerrada.");
+}
+
+async function fetchJson(path, options = {}, skipAuth = false) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+
+  if (!skipAuth && state.authToken) {
+    headers.Authorization = `Bearer ${state.authToken}`;
+  }
+
   const response = await fetch(path, {
-    headers: {
-      "Content-Type": "application/json",
-    },
     ...options,
+    headers,
   });
+
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `${response.status} ${response.statusText}`);
+    const error = new Error(text || `${response.status} ${response.statusText}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  if (response.status === 204) {
+    return null;
   }
   return response.json();
 }
@@ -77,6 +124,7 @@ function setActiveView(view) {
   views.forEach((candidate) => {
     const section = document.getElementById(`view-${candidate}`);
     const navButton = nav.querySelector(`[data-view="${candidate}"]`);
+    if (!section || !navButton) return;
     if (candidate === view) {
       section.classList.add("active");
       navButton.classList.add("active");
@@ -200,48 +248,30 @@ function renderHourly(rows) {
 
 function renderInboxRows(rows) {
   if (!rows.length) {
-    inboxTableBody.innerHTML = "<tr><td colspan='7'>Sin resultados.</td></tr>";
+    inboxTableBody.innerHTML = "<tr><td colspan='5'>Sin resultados.</td></tr>";
     return;
   }
+
   inboxTableBody.innerHTML = rows
-    .map((row) => {
-      const riskClass = row.risk_flag ? "risk-on" : "risk-off";
-      const riskText = row.risk_flag ? "En riesgo" : "Estable";
-      return `
+    .map(
+      (row) => `
       <tr>
-        <td>${escapeHtml(row.client?.name || "-")}<br /><small>${escapeHtml(row.client?.phone || "")}</small></td>
-        <td>${escapeHtml(row.status)}</td>
-        <td>${escapeHtml(row.assigned_agent?.name || "-")}</td>
-        <td>${escapeHtml(new Date(row.last_message_at).toLocaleString())}</td>
-        <td><span class="risk-badge ${riskClass}">${riskText}</span></td>
-        <td>${row.priority_score}</td>
-        <td><button class="ghost-btn" data-open-conversation="${row.id}">Abrir</button></td>
+        <td>${escapeHtml(row.client_name || "-")}</td>
+        <td>${escapeHtml(row.phone || "-")}</td>
+        <td>${escapeHtml(row.status || "-")}</td>
+        <td>${escapeHtml(new Date(row.last_seen_at).toLocaleString())}</td>
+        <td><button class="ghost-btn" data-open-conversation="${row.conversation_id}">Abrir</button></td>
       </tr>
-      `;
-    })
+    `
+    )
     .join("");
-}
-
-const detailAgentSelect = document.getElementById("detailAgentSelect");
-const detailStatusSelect = document.getElementById("detailStatusSelect");
-const updateStatusBtn = document.getElementById("updateStatusBtn");
-
-async function patchActiveConversation(payload) {
-  if (!state.selectedConversationId) return;
-  await fetchJson(`/conversations/${state.selectedConversationId}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-  await refreshAll();
-  await openConversation(state.selectedConversationId);
 }
 
 function populateAgentSelect() {
   if (!state.summary || !state.summary.agent_ranking) return;
   const currentVal = detailAgentSelect.value;
-  // Keep "Unassigned" option
   let html = '<option value="">-- Sin asignar --</option>';
-  state.summary.agent_ranking.forEach(agent => {
+  state.summary.agent_ranking.forEach((agent) => {
     html += `<option value="${agent.agent_id}">${escapeHtml(agent.agente)}</option>`;
   });
   detailAgentSelect.innerHTML = html;
@@ -252,19 +282,9 @@ function renderDetail(detail) {
   const conv = detail.conversation;
   state.selectedConversationDetail = detail;
 
-  // Populate agents if needed (idempotent-ish)
   populateAgentSelect();
-  
-  // Set current values
-  if (conv.assigned_agent && conv.assigned_agent.id) {
-    detailAgentSelect.value = conv.assigned_agent.id;
-  } else {
-    detailAgentSelect.value = "";
-  }
-  
-  if (conv.status) {
-      detailStatusSelect.value = conv.status;
-  }
+  detailAgentSelect.value = conv.assigned_agent?.id || "";
+  detailStatusSelect.value = conv.status || "NEW";
 
   detailMeta.innerHTML = `
     <strong>${escapeHtml(conv.client?.name || "Sin cliente")}</strong><br />
@@ -277,86 +297,37 @@ function renderDetail(detail) {
   detailMetrics.innerHTML = `
     FRT: <strong>${fmtMinutes(metrics.frt_minutes)}</strong> |
     ART: <strong>${fmtMinutes(metrics.art_avg_minutes)}</strong> |
-    Resolución: <strong>${fmtMinutes(metrics.time_to_resolution_minutes)}</strong> |
+    Resolucion: <strong>${fmtMinutes(metrics.time_to_resolution_minutes)}</strong> |
     Prioridad: <strong>${metrics.priority_score}</strong>
   `;
 
-  let insightsHtml = "<p class='text-secondary'>Sin insights. Usa el botón Analizar con AI.</p>";
-  
+  let insightsHtml = "<p class='text-secondary'>Sin insights. Usa el boton Analizar con AI.</p>";
   if (detail.insights && Object.keys(detail.insights).length > 0) {
-    const i = detail.insights;
-    // const scoreClass = i.sentiment_score >= 8 ? "text-success" : i.sentiment_score <= 4 ? "text-danger" : "text-warning";
-    const bulletsHtml = (i.summary_bullets || []).map(b => `<li>${escapeHtml(b)}</li>`).join("");
-    const tagsHtml = (i.tags || []).map(t => `<span class="insight-tag">${escapeHtml(t)}</span>`).join("");
-    
-    // Key points safely handled
-    const kp = i.key_points || {};
-    
-    // Safe accessor for suggested reply
-    const suggestedReply = i.suggested_reply || "";
-
-    insightsHtml = `
-      <div class="insights-container">
-        <div class="insight-header">
-          <div style="display:flex; align-items:center; gap:8px;">
-             <span class="sentiment-badge ${i.sentiment_label}">${i.sentiment_label}</span>
-             <span style="font-size:11px; color:#666;">Score: <strong>${i.sentiment_score}/10</strong></span>
-          </div>
-          ${tagsHtml ? `<div class="tags-container" style="justify-content:flex-end;">${tagsHtml}</div>` : ''}
-        </div>
-
-        <section class="insight-section">
-          <h4>Resumen</h4>
-          <ul class="insight-bullets">
-            ${bulletsHtml}
-          </ul>
-        </section>
-
-        <section class="insight-section">
-          <h4>Claves</h4>
-          <div class="key-points-grid">
-            <div class="kp-item"><strong>Necesidad</strong><span>${escapeHtml(kp.need || "-")}</span></div>
-            <div class="kp-item"><strong>Objeción</strong><span>${escapeHtml(kp.objection || "-")}</span></div>
-            <div class="kp-item"><strong>Urgencia</strong><span>${escapeHtml(kp.urgency || "-")}</span></div>
-            <div class="kp-item"><strong>Sig. Paso</strong><span>${escapeHtml(kp.next_step || "-")}</span></div>
-          </div>
-        </section>
-
-        ${suggestedReply ? `
-        <section class="insight-section" style="margin-top:4px; padding-top:4px; border-top:1px dashed #ddd;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-             <h4>💬 Respuesta Sugerida</h4>
-             <button class="ghost-btn" style="padding:2px 8px; font-size:10px; height:auto;" onclick="const txt = this.getAttribute('data-reply'); document.getElementById('messageText').value = txt; document.getElementById('messageText').focus();" data-reply="${escapeHtml(suggestedReply)}">
-               Copiar
-             </button>
-          </div>
-          <div style="background:#e3f2fd; padding:6px; border-radius:4px; font-style:italic; font-size:11px; color:#0d47a1; border:1px solid #bbdefb;">
-            "${escapeHtml(suggestedReply)}"
-          </div>
-        </section>
-        `: ''}
-
-        <details style="margin-top:8px; font-size:10px; color:#999;">
-          <summary style="cursor:pointer; outline:none;">Debug JSON</summary>
-          <pre style="white-space:pre-wrap; background:#f5f5f5; padding:4px; border-radius:4px; margin-top:2px; font-size:9px;">${escapeHtml(JSON.stringify(detail.insights, null, 2))}</pre>
-        </details>
-      </div>
-    `;
+    insightsHtml = `<pre class="result-box">${escapeHtml(JSON.stringify(detail.insights, null, 2))}</pre>`;
   }
-  
-  detailInsights.innerHTML = `<div class="result-box" style="background:transparent; padding:0;">${insightsHtml}</div>`;
+  detailInsights.innerHTML = insightsHtml;
 
   detailMessages.innerHTML = detail.messages
     .map((message) => {
       const cls = message.sender === "USER" ? "msg-user" : message.sender === "AGENT" ? "msg-agent" : "msg-bot";
       return `
       <div class="msg ${cls}">
-        <div class="msg-meta">${escapeHtml(message.sender)} · ${escapeHtml(new Date(message.ts).toLocaleString())}</div>
+        <div class="msg-meta">${escapeHtml(message.sender)} | ${escapeHtml(new Date(message.ts).toLocaleString())}</div>
         <div>${escapeHtml(message.text)}</div>
       </div>
       `;
     })
     .join("");
+}
+
+async function patchActiveConversation(payload) {
+  if (!state.selectedConversationId) return;
+  await fetchJson(`/conversations/${state.selectedConversationId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  await refreshAll();
+  await openConversation(state.selectedConversationId);
 }
 
 async function loadSummary() {
@@ -368,18 +339,15 @@ async function loadSummary() {
   renderRiskTable(summary.at_risk_table);
   renderAgents(summary.agent_ranking);
   renderHourly(summary.messages_by_hour);
-  // Also populate select if drawer is open? 
-  // Better to just have it available in state
 }
 
 async function loadInbox() {
   const params = new URLSearchParams();
-  if (filterStatus.value) params.append("status", filterStatus.value);
-  if (filterRisk.value) params.append("risk_flag", filterRisk.value);
-  if (filterSearch.value.trim()) params.append("q", filterSearch.value.trim());
-
-  const query = params.toString();
-  const rows = await fetchJson(`/conversations${query ? `?${query}` : ""}`);
+  params.set("limit", "10");
+  if (filterSearch.value.trim()) {
+    params.set("q", filterSearch.value.trim());
+  }
+  const rows = await fetchJson(`/conversations/recent-clients?${params.toString()}`);
   renderInboxRows(rows);
 }
 
@@ -394,7 +362,7 @@ async function analyzeConversation() {
   if (!state.selectedConversationId) return;
   await fetchJson(`/conversations/${state.selectedConversationId}/analyze`, {
     method: "POST",
-    body: JSON.stringify({ force: true, mock: false }), // Use real AI now by default if configured
+    body: JSON.stringify({ force: true }),
   });
   await openConversation(state.selectedConversationId);
   await refreshAll();
@@ -411,7 +379,7 @@ async function sendMessage(event) {
     body: JSON.stringify({
       sender: messageSender.value,
       text,
-      provider: "mock",
+      provider: "wasender",
     }),
   });
   messageText.value = "";
@@ -419,48 +387,47 @@ async function sendMessage(event) {
   await refreshAll();
 }
 
-async function runSimulator(event) {
-  event.preventDefault();
-  const form = new FormData(simulatorForm);
-  const now = new Date().toISOString();
-  const payload = {
-    provider: form.get("provider"),
-    wa_id: form.get("wa_id"),
-    message_id: `wamid.mock.${Date.now()}`,
-    timestamp: now,
-    direction: "inbound",
-    message_type: "text",
-    text: form.get("text"),
-    sender_role: form.get("sender_role"),
-  };
-  const result = await fetchJson("/webhook/mock", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-  simulatorResult.textContent = JSON.stringify(result, null, 2);
-  await refreshAll();
-}
-
-async function reseedDataset() {
-  seedResult.textContent = "Generando dataset...";
-  const result = await fetchJson("/seed", {
-    method: "POST",
-    body: JSON.stringify({
-      agents: 6,
-      clients: 120,
-      conversations: 220,
-      min_messages: 6,
-      max_messages: 25,
-      run_ai_on_pct: 0.35,
-    }),
-  });
-  seedResult.textContent = JSON.stringify(result, null, 2);
-  await refreshAll();
-}
-
 async function refreshAll() {
   await loadSummary();
   await loadInbox();
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  loginError.textContent = "";
+
+  const username = loginUsername.value.trim();
+  const password = loginPassword.value;
+  if (!username || !password) {
+    loginError.textContent = "Debes ingresar usuario y clave.";
+    return;
+  }
+
+  try {
+    const auth = await fetchJson(
+      "/auth/login",
+      {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      },
+      true
+    );
+    setToken(auth.access_token);
+    hideLogin();
+    await refreshAll();
+  } catch (error) {
+    loginError.textContent = "Credenciales invalidas.";
+  }
+}
+
+function showError(error) {
+  if (error && error.status === 401) {
+    logout();
+    loginError.textContent = "Tu sesion expiro. Vuelve a ingresar.";
+    return;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  alert(`Error: ${message}`);
 }
 
 function wireEvents() {
@@ -480,30 +447,33 @@ function wireEvents() {
   applyInboxFiltersBtn.addEventListener("click", () => loadInbox().catch(showError));
   sendMessageForm.addEventListener("submit", (event) => sendMessage(event).catch(showError));
   analyzeButton.addEventListener("click", () => analyzeConversation().catch(showError));
-  
-  // New controls
   detailAgentSelect.addEventListener("change", () => {
-      const val = detailAgentSelect.value;
-      patchActiveConversation({ assigned_agent_id: val || null }).catch(showError);
+    const val = detailAgentSelect.value;
+    patchActiveConversation({ assigned_agent_id: val || null }).catch(showError);
   });
-  
   updateStatusBtn.addEventListener("click", () => {
-      const val = detailStatusSelect.value;
-      patchActiveConversation({ status: val }).catch(showError);
+    const val = detailStatusSelect.value;
+    patchActiveConversation({ status: val }).catch(showError);
   });
 
-  simulatorForm.addEventListener("submit", (event) => runSimulator(event).catch(showError));
-  seedButton.addEventListener("click", () => reseedDataset().catch(showError));
-}
-
-function showError(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  alert(`Error: ${message}`);
+  loginForm.addEventListener("submit", (event) => submitLogin(event).catch(showError));
+  logoutBtn.addEventListener("click", () => logout());
 }
 
 async function boot() {
   wireEvents();
-  await refreshAll();
+
+  if (!state.authToken) {
+    showLogin();
+    return;
+  }
+
+  hideLogin();
+  try {
+    await refreshAll();
+  } catch (error) {
+    showError(error);
+  }
 }
 
 boot().catch(showError);

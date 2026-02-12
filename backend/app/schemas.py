@@ -28,7 +28,7 @@ class AddMessageRequest(BaseModel):
     sender: MessageSender
     text: str = Field(min_length=1)
     ts: Optional[datetime] = None
-    provider: str = "mock"
+    provider: str = "wasender"
     provider_message_id: Optional[str] = None
 
 

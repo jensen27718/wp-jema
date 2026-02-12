@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import json
-import os
 from collections import Counter
 
 from openai import OpenAI
 
+from .config import settings
 from .models import SentimentLabel
 
-# User provided key
-DEEPSEEK_API_KEY = "sk-5f9abb8045174ee4838df6b447e4fffc"
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-
-client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+client = (
+    OpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
+    if settings.deepseek_api_key
+    else None
+)
 
 NEGATIVE_HINTS = {
     "caro": "precio",
@@ -30,6 +30,8 @@ def analyze_messages(texts: list[str]) -> dict:
     """
     Analyzes conversation messages using DeepSeek API with a fallback to mock logic.
     """
+    if client is None:
+        return _analyze_mock(texts)
     try:
         return _analyze_with_deepseek(texts)
     except Exception as e:
