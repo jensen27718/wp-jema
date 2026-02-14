@@ -1,6 +1,7 @@
 services:
   - type: web
-    name: whatsapp-control-tower-crm
+    # Unique service name to avoid collisions with older Blueprints/services in Render.
+    name: jema-analisis-wp
     runtime: python
     plan: free
     rootDir: backend
